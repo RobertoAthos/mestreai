@@ -1,0 +1,52 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: mestreai-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-mestreai}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mestreai}
+      POSTGRES_DB: ${POSTGRES_DB:-mestreai}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-mestreai} -d ${POSTGRES_DB:-mestreai}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build: .
+    container_name: mestreai-api
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    environment:
+      APP_NAME: ${APP_NAME:-Mestre IA}
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-mock-openrouter-api-key}
+      OPENROUTER_MODEL: ${OPENROUTER_MODEL:-anthropic/claude-3.5-sonnet}
+      OPENROUTER_BASE_URL: ${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}
+      STORAGE_PATH: /app/storage
+      MAX_PDF_SIZE_MB: ${MAX_PDF_SIZE_MB:-25}
+      MOCK_AI: ${MOCK_AI:-true}
+      # Hardcoded to the in-network hostname so a host-oriented `.env`
+      # with `localhost` cannot accidentally override it. Inside the
+      # compose network, `db` resolves to the postgres service.
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-mestreai}:${POSTGRES_PASSWORD:-mestreai}@db:5432/${POSTGRES_DB:-mestreai}
+    volumes:
+      - ./storage:/app/storage
+      - ./app:/app/app
+      - ./alembic:/app/alembic
+      - ./alembic.ini:/app/alembic.ini
+    command: >
+      sh -c "alembic upgrade head &&
+             uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
+
+volumes:
+  postgres_data:
