@@ -14,7 +14,7 @@ import type {
 
 const fallbackBase = (Constants.expoConfig?.extra as { apiBaseUrl?: string } | undefined)?.apiBaseUrl;
 export const API_BASE_URL: string =
-  process.env.EXPO_PUBLIC_API_BASE_URL || fallbackBase || "http://localhost:8000";
+  process.env.EXPO_PUBLIC_API_BASE_URL || fallbackBase || ""
 
 class ApiError extends Error {
   constructor(public status: number, message: string) {
