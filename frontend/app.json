@@ -44,7 +44,8 @@
           "iCloudContainerEnvironment": "Production"
         }
       ],
-      "expo-asset"
+      "expo-asset",
+      "./plugins/withFmtConstevalFix"
     ],
     "extra": {
       "apiBaseUrl": "https://mestre-api.beto.digital"
