@@ -76,6 +76,7 @@ def _orm_to_project(row: ProjectORM) -> Project:
         size_bytes=row.size_bytes,
         summary=summary,
         error=row.error,
+        chat_memory=row.chat_memory,
     )
 
 
@@ -161,6 +162,13 @@ class ProjectRepository:
         await self.session.flush()
         await self.session.refresh(row)
         return _orm_to_project(row)
+
+    async def update_chat_memory(self, project_id: str, memory: Optional[str]) -> None:
+        row = await self.session.get(ProjectORM, project_id)
+        if row is None:
+            return
+        row.chat_memory = memory
+        await self.session.flush()
 
     async def delete_for_user(self, project_id: str, user_id: str) -> bool:
         result = await self.session.execute(

@@ -42,6 +42,10 @@ class ProjectORM(Base):
     size_bytes: Mapped[int] = mapped_column(default=0, nullable=False)
     error: Mapped[Optional[str]] = mapped_column(Text(), nullable=True)
     summary: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    # Rolling LLM-generated summary of older chat turns once the raw history
+    # outgrows the sliding window. Lets the assistant keep continuity across
+    # arbitrarily long conversations without re-sending every message.
+    chat_memory: Mapped[Optional[str]] = mapped_column(Text(), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         nullable=False, server_default=func.now()

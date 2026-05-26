@@ -1,13 +1,24 @@
+import asyncio
 import json
+import logging
 import re
 from pathlib import Path
-from typing import Optional
+from typing import AsyncIterator, Optional
 
+from json_repair import repair_json
 from openai import AsyncOpenAI
+from pydantic import ValidationError
 
 from app.config import get_settings
 from app.models.schemas import ChatMessage, ChatRole, ProjectSummary
 from app.services.pdf_processor import extract_text, render_page_as_base64_png
+
+logger = logging.getLogger(__name__)
+
+
+class LLMParseError(RuntimeError):
+    """Raised when the LLM response cannot be coerced into the expected schema."""
+
 
 SYSTEM_PROMPT_SUMMARY = """Você é o Mestre IA, um assistente especialista em interpretar projetos arquitetônicos
 para mestres de obras e pedreiros brasileiros. Sua tarefa é ler o PDF de uma planta baixa e
@@ -24,6 +35,40 @@ no projeto, diga que não está na planta — não invente.
 Após responder, sugira de 2 a 4 perguntas curtas de acompanhamento que façam sentido no
 contexto da obra (botões de atalho). Devolva sua resposta no seguinte JSON estrito:
 {"answer": "...", "quick_replies": ["...", "..."]}"""
+
+# Plain-text variant used by stream_chat. Quick replies come from a separate
+# follow-up call so the main answer can stream as natural prose without JSON
+# scaffolding bleeding into the UI.
+SYSTEM_PROMPT_CHAT_TEXT = """Você é o Mestre IA, um assistente prático para mestres de obras no canteiro.
+
+Você terá três fontes de contexto, em ordem de prioridade:
+1. O RESUMO ESTRUTURADO do projeto (medidas, esquadrias, paredes, checklist).
+2. A MEMÓRIA DA CONVERSA (resumo das mensagens mais antigas, se existir).
+3. O HISTÓRICO RECENTE de mensagens trocadas com o usuário.
+
+REGRAS DE CONTINUIDADE:
+- Sempre considere o que já foi dito antes. Se o usuário pergunta "e a outra?" ou "e
+  esse?", interprete usando a última coisa que ele perguntou ou que você respondeu.
+- Quando o usuário citar algo discutido antes (um cômodo, uma porta, uma medida),
+  amarre sua resposta ao que vocês já trataram.
+- Se a memória da conversa contiver um fato relevante, use-o sem repetir tudo.
+- Se faltar contexto para entender a pergunta, pergunte de volta em vez de inventar.
+
+Responda em português brasileiro, de forma direta, curta e usando vocabulário comum
+de obra (alvenaria, contramarco, peitoril, prumada etc). Quando citar medidas,
+sempre informe a unidade. Se a informação não estiver no projeto, diga que não está
+na planta — não invente. Responda APENAS com o texto da resposta, sem JSON, sem
+markdown extra, sem rótulos como 'Resposta:'."""
+
+
+SYSTEM_PROMPT_HISTORY_SUMMARY = """Você é um assistente que comprime conversas técnicas de
+obra em uma memória curta e factual. Receberá uma sequência de mensagens entre um
+mestre de obras (USER) e o Mestre IA (ASSISTANT). Devolva um único parágrafo em
+português brasileiro descrevendo:
+- quais assuntos já foram tratados (cômodos, esquadrias, paredes, materiais);
+- decisões ou confirmações que o usuário deu;
+- dúvidas que ficaram em aberto.
+Sem listas, sem markdown, sem citar números de mensagem. Máximo 6 frases."""
 
 
 SUMMARY_JSON_SCHEMA_HINT = """Esquema esperado:
@@ -89,8 +134,24 @@ def _strip_code_fences(text: str) -> str:
 
 
 def _parse_json(text: str) -> dict:
+    """Best-effort parse of an LLM JSON response.
+
+    Tries strict json.loads first; on failure, runs json-repair to fix common
+    truncation/quoting issues (missing commas, unclosed arrays, trailing commas,
+    etc). Raises LLMParseError if the result still isn't a dict.
+    """
     cleaned = _strip_code_fences(text)
-    return json.loads(cleaned)
+    try:
+        parsed = json.loads(cleaned)
+    except json.JSONDecodeError as exc:
+        logger.warning("Strict JSON parse failed (%s); attempting json-repair.", exc)
+        repaired = repair_json(cleaned, return_objects=True)
+        if not repaired:
+            raise LLMParseError("Resposta da IA veio vazia ou irrecuperável.") from exc
+        parsed = repaired
+    if not isinstance(parsed, dict):
+        raise LLMParseError("Resposta da IA não é um objeto JSON.")
+    return parsed
 
 
 class OpenRouterClient:
@@ -110,10 +171,7 @@ class OpenRouterClient:
     def is_mocked(self) -> bool:
         return self.settings.mock_ai or self.settings.openrouter_api_key.startswith("mock-")
 
-    async def summarize_project(self, pdf_path: Path) -> ProjectSummary:
-        if self.is_mocked:
-            return MOCK_SUMMARY.model_copy(deep=True)
-
+    def _build_summary_messages(self, pdf_path: Path) -> list[dict]:
         text = extract_text(pdf_path)
         image_b64 = render_page_as_base64_png(pdf_path, page_index=0)
 
@@ -137,54 +195,314 @@ class OpenRouterClient:
                 }
             )
 
+        return [
+            {"role": "system", "content": SYSTEM_PROMPT_SUMMARY},
+            {"role": "user", "content": user_content},
+        ]
+
+    async def summarize_project(self, pdf_path: Path) -> ProjectSummary:
+        if self.is_mocked:
+            return MOCK_SUMMARY.model_copy(deep=True)
+
+        messages = self._build_summary_messages(pdf_path)
+        raw = await self._complete_json(messages, temperature=0.1)
+        try:
+            payload = _parse_json(raw)
+            return ProjectSummary.model_validate(payload)
+        except (LLMParseError, ValidationError) as exc:
+            logger.warning("First summary parse/validation failed (%s); retrying once.", exc)
+
+        # Retry once asking the model to re-emit strict JSON. Common cause is
+        # truncation at max_tokens or a single stray comma.
+        repair_messages = messages + [
+            {"role": "assistant", "content": raw},
+            {
+                "role": "user",
+                "content": (
+                    "Sua resposta anterior não é JSON estritamente válido conforme o "
+                    "esquema. Reenvie APENAS o JSON, sem texto fora dele, sem markdown, "
+                    "fechando todas as listas e chaves."
+                ),
+            },
+        ]
+        raw_retry = await self._complete_json(repair_messages, temperature=0.0)
+        try:
+            payload = _parse_json(raw_retry)
+            return ProjectSummary.model_validate(payload)
+        except (LLMParseError, ValidationError) as exc:
+            logger.exception("Summary parse failed after retry. Raw responses logged below.")
+            logger.error("First raw response: %s", raw)
+            logger.error("Retry raw response: %s", raw_retry)
+            raise LLMParseError("Não foi possível interpretar a resposta da IA.") from exc
+
+    async def _complete_json(self, messages: list[dict], temperature: float) -> str:
         completion = await self.client.chat.completions.create(
             model=self.settings.openrouter_model,
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT_SUMMARY},
-                {"role": "user", "content": user_content},
-            ],
-            temperature=0.1,
+            messages=messages,
+            temperature=temperature,
+            max_tokens=self.settings.openrouter_max_tokens,
             response_format={"type": "json_object"},
         )
-        payload = _parse_json(completion.choices[0].message.content or "{}")
-        return ProjectSummary.model_validate(payload)
+        return completion.choices[0].message.content or "{}"
+
+    async def stream_summary(self, pdf_path: Path) -> AsyncIterator[dict]:
+        """Stream the analysis. Yields dicts:
+
+        - {"type": "token", "delta": str, "buffer": str} for each LLM chunk.
+        - {"type": "done", "summary": ProjectSummary} when the JSON parses.
+        - {"type": "error", "message": str} on failure.
+
+        Mocked mode emits MOCK_SUMMARY in pseudo-chunks so the UI can be tested
+        end-to-end without an API key.
+        """
+        if self.is_mocked:
+            async for ev in _mock_stream_summary():
+                yield ev
+            return
+
+        messages = self._build_summary_messages(pdf_path)
+        buffer = ""
+        try:
+            stream = await self.client.chat.completions.create(
+                model=self.settings.openrouter_model,
+                messages=messages,
+                temperature=0.1,
+                max_tokens=self.settings.openrouter_max_tokens,
+                response_format={"type": "json_object"},
+                stream=True,
+            )
+            async for chunk in stream:
+                if not chunk.choices:
+                    continue
+                delta = chunk.choices[0].delta.content or ""
+                if not delta:
+                    continue
+                buffer += delta
+                yield {"type": "token", "delta": delta, "buffer": buffer}
+        except Exception as exc:
+            logger.exception("Streaming LLM call failed.")
+            yield {"type": "error", "message": f"Falha na chamada da IA: {exc}"}
+            return
+
+        try:
+            payload = _parse_json(buffer)
+            summary = ProjectSummary.model_validate(payload)
+        except (LLMParseError, ValidationError) as exc:
+            logger.warning("Stream summary parse failed (%s); attempting one repair call.", exc)
+            repair_messages = messages + [
+                {"role": "assistant", "content": buffer},
+                {
+                    "role": "user",
+                    "content": (
+                        "Sua resposta anterior não é JSON estritamente válido conforme o "
+                        "esquema. Reenvie APENAS o JSON, sem texto fora dele, sem markdown, "
+                        "fechando todas as listas e chaves."
+                    ),
+                },
+            ]
+            try:
+                raw_retry = await self._complete_json(repair_messages, temperature=0.0)
+                payload = _parse_json(raw_retry)
+                summary = ProjectSummary.model_validate(payload)
+            except (LLMParseError, ValidationError) as retry_exc:
+                logger.exception("Repair call also failed.")
+                yield {"type": "error", "message": "Não foi possível interpretar a resposta da IA."}
+                return
+
+        yield {"type": "done", "summary": summary}
+
+    async def stream_chat(
+        self,
+        question: str,
+        summary: Optional[ProjectSummary],
+        history: list[ChatMessage],
+        chat_memory: Optional[str] = None,
+    ) -> AsyncIterator[dict]:
+        """Stream a chat answer as plain text, then emit quick_replies.
+
+        Yields:
+        - {"type": "token", "delta": str} as the assistant types.
+        - {"type": "done", "answer": str, "quick_replies": [str]} at the end.
+        - {"type": "error", "message": str} on failure.
+        """
+        if self.is_mocked:
+            answer, replies = _mock_chat(question, summary)
+            async for ev in _stream_text_pieces(answer):
+                yield ev
+            yield {"type": "done", "answer": answer, "quick_replies": replies}
+            return
+
+        messages = self._build_chat_messages(question, summary, history, chat_memory)
+
+        answer_buffer = ""
+        try:
+            stream = await self.client.chat.completions.create(
+                model=self.settings.openrouter_model,
+                messages=messages,
+                temperature=0.2,
+                max_tokens=self.settings.openrouter_max_tokens,
+                stream=True,
+            )
+            async for chunk in stream:
+                if not chunk.choices:
+                    continue
+                delta = chunk.choices[0].delta.content or ""
+                if not delta:
+                    continue
+                answer_buffer += delta
+                yield {"type": "token", "delta": delta}
+        except Exception as exc:
+            logger.exception("Streaming chat call failed.")
+            yield {"type": "error", "message": f"Falha na chamada da IA: {exc}"}
+            return
+
+        answer_text = answer_buffer.strip() or "(sem resposta)"
+        replies = await self._suggest_quick_replies(question, answer_text, summary)
+        yield {"type": "done", "answer": answer_text, "quick_replies": replies}
+
+    async def _suggest_quick_replies(
+        self,
+        question: str,
+        answer: str,
+        summary: Optional[ProjectSummary],
+    ) -> list[str]:
+        """Second short LLM call (non-streaming, ~50 tokens) for follow-up chips.
+
+        Kept tiny so the user doesn't perceive latency after the answer streams.
+        Returns an empty list on any failure — frontend has its own fallbacks.
+        """
+        context = summary.model_dump_json(indent=2) if summary else "(sem projeto)"
+        try:
+            completion = await self.client.chat.completions.create(
+                model=self.settings.openrouter_model,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "Você sugere de 2 a 4 perguntas curtas de acompanhamento para um "
+                            "mestre de obras, em português brasileiro. Devolva APENAS um array "
+                            "JSON de strings curtas (máx 35 chars cada). Sem texto fora do array."
+                        ),
+                    },
+                    {
+                        "role": "user",
+                        "content": (
+                            f"Contexto do projeto:\n{context}\n\n"
+                            f"Pergunta do usuário: {question}\n\n"
+                            f"Resposta dada:\n{answer}\n\n"
+                            "Liste perguntas-atalho úteis agora."
+                        ),
+                    },
+                ],
+                temperature=0.4,
+                max_tokens=200,
+            )
+            raw = (completion.choices[0].message.content or "").strip()
+            cleaned = _strip_code_fences(raw)
+            parsed = json.loads(cleaned) if cleaned.startswith("[") else repair_json(cleaned, return_objects=True)
+            if isinstance(parsed, list):
+                return [str(x).strip() for x in parsed if str(x).strip()][:4]
+        except Exception:
+            logger.warning("quick_replies suggestion failed; returning [].")
+        return []
 
     async def chat(
         self,
         question: str,
         summary: Optional[ProjectSummary],
         history: list[ChatMessage],
+        chat_memory: Optional[str] = None,
     ) -> tuple[str, list[str]]:
         if self.is_mocked:
             return _mock_chat(question, summary)
 
-        context_lines: list[str] = []
-        if summary:
-            context_lines.append("Resumo estruturado do projeto:\n" + summary.model_dump_json(indent=2))
-        context = "\n\n".join(context_lines) or "Nenhum projeto carregado."
-
-        messages: list[dict] = [
-            {"role": "system", "content": SYSTEM_PROMPT_CHAT},
-            {"role": "system", "content": context},
-        ]
-        for msg in history[-10:]:
-            messages.append({"role": msg.role.value, "content": msg.content})
-        messages.append({"role": "user", "content": question})
-
-        completion = await self.client.chat.completions.create(
-            model=self.settings.openrouter_model,
-            messages=messages,
-            temperature=0.2,
-            response_format={"type": "json_object"},
+        # JSON-mode path uses the older prompt that asks for {answer, quick_replies}
+        # in a single shot. Memory + history are stitched into a single user-side
+        # context block so the schema instructions stay clean.
+        messages = self._build_chat_messages(
+            question, summary, history, chat_memory, system_prompt=SYSTEM_PROMPT_CHAT,
         )
-        raw = completion.choices[0].message.content or "{}"
+
+        raw = await self._complete_json(messages, temperature=0.2)
         try:
             payload = _parse_json(raw)
-        except json.JSONDecodeError:
+        except LLMParseError:
+            logger.warning("Chat response was unparseable JSON; returning raw text.")
             return raw, []
         answer = str(payload.get("answer", raw)).strip()
         replies = [str(q).strip() for q in payload.get("quick_replies", []) if str(q).strip()]
         return answer, replies[:4]
+
+    def _build_chat_messages(
+        self,
+        question: str,
+        summary: Optional[ProjectSummary],
+        history: list[ChatMessage],
+        chat_memory: Optional[str],
+        system_prompt: str = SYSTEM_PROMPT_CHAT_TEXT,
+    ) -> list[dict]:
+        """Assemble the message list passed to the LLM, including all three
+        memory layers: project summary, rolling chat_memory, and the last N
+        raw turns."""
+        context_blocks: list[str] = []
+        if summary:
+            context_blocks.append(
+                "RESUMO ESTRUTURADO DO PROJETO:\n" + summary.model_dump_json(indent=2)
+            )
+        else:
+            context_blocks.append("RESUMO ESTRUTURADO DO PROJETO: (nenhum projeto carregado)")
+        if chat_memory:
+            context_blocks.append(
+                "MEMÓRIA DA CONVERSA (mensagens mais antigas, resumidas):\n" + chat_memory
+            )
+        context = "\n\n".join(context_blocks)
+
+        messages: list[dict] = [
+            {"role": "system", "content": system_prompt},
+            {"role": "system", "content": context},
+        ]
+        window = max(1, self.settings.chat_history_window)
+        for msg in history[-window:]:
+            messages.append({"role": msg.role.value, "content": msg.content})
+        messages.append({"role": "user", "content": question})
+        return messages
+
+    async def summarize_chat_history(self, messages: list[ChatMessage]) -> Optional[str]:
+        """Compress a list of chat messages into a short memory paragraph.
+
+        Returns None when there's nothing useful to compress or on any LLM
+        failure — caller treats that as "keep using the previous memory".
+        """
+        if not messages:
+            return None
+        if self.is_mocked:
+            # Deterministic mock memory so the threshold logic can be tested.
+            return (
+                "Conversa anterior cobriu " + str(len(messages)) +
+                " mensagens sobre o projeto (medidas, esquadrias e checklist)."
+            )
+
+        transcript_lines = []
+        for m in messages:
+            role = "USER" if m.role == ChatRole.USER else "ASSISTANT"
+            transcript_lines.append(f"{role}: {m.content}")
+        transcript = "\n".join(transcript_lines)
+
+        try:
+            completion = await self.client.chat.completions.create(
+                model=self.settings.openrouter_model,
+                messages=[
+                    {"role": "system", "content": SYSTEM_PROMPT_HISTORY_SUMMARY},
+                    {"role": "user", "content": transcript},
+                ],
+                temperature=0.2,
+                max_tokens=self.settings.chat_memory_max_tokens,
+            )
+            text = (completion.choices[0].message.content or "").strip()
+            return text or None
+        except Exception:
+            logger.exception("Chat history summarization failed.")
+            return None
 
 
 def _mock_chat(question: str, summary: Optional[ProjectSummary]) -> tuple[str, list[str]]:
@@ -240,6 +558,31 @@ def _mock_chat(question: str, summary: Optional[ProjectSummary]) -> tuple[str, l
     else:
         body = "Ainda não tenho informações estruturadas deste projeto. Envie um PDF para que eu possa analisar."
     return body, ["Lista de portas", "Lista de janelas", "Espessura das paredes", "Checklist de execução"]
+
+
+async def _mock_stream_summary() -> AsyncIterator[dict]:
+    """Replay MOCK_SUMMARY as a token stream so the streaming UI is exercised
+    even when no real LLM key is configured."""
+    summary = MOCK_SUMMARY.model_copy(deep=True)
+    raw = summary.model_dump_json()
+    # Emit ~80-char windows with a small delay so the partial-summary UI has
+    # something to render frame by frame.
+    chunk_size = 80
+    buffer = ""
+    for i in range(0, len(raw), chunk_size):
+        delta = raw[i : i + chunk_size]
+        buffer += delta
+        yield {"type": "token", "delta": delta, "buffer": buffer}
+        await asyncio.sleep(0.08)
+    yield {"type": "done", "summary": summary}
+
+
+async def _stream_text_pieces(text: str) -> AsyncIterator[dict]:
+    """Emit `text` in small chunks for the mocked chat streaming path."""
+    chunk = 12
+    for i in range(0, len(text), chunk):
+        yield {"type": "token", "delta": text[i : i + chunk]}
+        await asyncio.sleep(0.04)
 
 
 _client: Optional[OpenRouterClient] = None

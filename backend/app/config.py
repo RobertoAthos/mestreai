@@ -12,6 +12,17 @@ class Settings(BaseSettings):
     openrouter_api_key: str = "mock-openrouter-api-key"
     openrouter_model: str = "anthropic/claude-3.5-sonnet"
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
+    # Cap on tokens the LLM may generate. Plant summaries are long and a low cap
+    # truncates the JSON mid-array, which then fails parsing.
+    openrouter_max_tokens: int = 8000
+
+    # Chat memory tuning. We always pass the last `chat_history_window` turns
+    # verbatim. When the conversation grows past `chat_memory_threshold` total
+    # messages, the oldest ones outside the window get rolled into a single
+    # natural-language summary stored on the project (chat_memory column).
+    chat_history_window: int = 20
+    chat_memory_threshold: int = 24
+    chat_memory_max_tokens: int = 600
 
     storage_path: str = "./storage"
     max_pdf_size_mb: int = 25

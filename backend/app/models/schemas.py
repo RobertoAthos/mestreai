@@ -62,6 +62,7 @@ class Project(BaseModel):
     size_bytes: int = 0
     summary: Optional[ProjectSummary] = None
     error: Optional[str] = None
+    chat_memory: Optional[str] = None
 
 
 class ProjectListItem(BaseModel):
