@@ -2,6 +2,8 @@ import { useFocusEffect, useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo } from "react";
 import {
   ActivityIndicator,
+  Alert,
+  Pressable,
   RefreshControl,
   ScrollView,
   StyleSheet,
@@ -21,6 +23,7 @@ import {
   DoorIcon,
   InfoIcon,
   RulerIcon,
+  TrashIcon,
   WallIcon,
   WindowIcon,
 } from "@/components/Icon";
@@ -45,6 +48,7 @@ export default function SummaryScreen() {
     streamProject,
     partialSummary,
     isStreaming,
+    deleteProject,
   } = useApp();
 
   useFocusEffect(
@@ -75,6 +79,30 @@ export default function SummaryScreen() {
       : currentProject?.summary;
 
   const goToChat = () => router.push("/(tabs)/chat");
+
+  const onRequestDelete = () => {
+    if (!currentProject) return;
+    const { id, name } = currentProject;
+    Alert.alert(
+      "Excluir projeto",
+      `Tem certeza que deseja excluir "${name}"? Esta ação não pode ser desfeita.`,
+      [
+        { text: "Cancelar", style: "cancel" },
+        {
+          text: "Excluir",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              await deleteProject(id);
+              router.replace("/(tabs)");
+            } catch {
+              Alert.alert("Erro", "Não foi possível excluir o projeto. Tente novamente.");
+            }
+          },
+        },
+      ],
+    );
+  };
 
   if (!currentProject) {
     return (
@@ -150,7 +178,18 @@ export default function SummaryScreen() {
         refreshControl={<RefreshControl refreshing={false} onRefresh={onRefresh} tintColor={colors.secondary} />}
       >
         <View style={styles.headerBlock}>
-          <Text style={styles.pageTitle}>Resumo: {currentProject.name}</Text>
+          <View style={styles.titleRow}>
+            <Text style={styles.pageTitle}>Resumo: {currentProject.name}</Text>
+            <Pressable
+              onPress={onRequestDelete}
+              hitSlop={12}
+              style={styles.deleteButton}
+              accessibilityRole="button"
+              accessibilityLabel="Excluir projeto"
+            >
+              <TrashIcon size={20} color={colors.error} />
+            </Pressable>
+          </View>
           <Text style={styles.pageSubtitle}>
             Visão geral do projeto e pontos críticos para a execução da obra.
           </Text>
@@ -301,7 +340,17 @@ const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.surface },
   scroll: { paddingHorizontal: spacing.screenPadding, paddingTop: spacing.lg, paddingBottom: 200, gap: spacing.lg },
   headerBlock: { gap: spacing.sm },
-  pageTitle: { ...typography.headlineLg, color: colors.onSurface, fontSize: 30 },
+  titleRow: { flexDirection: "row", alignItems: "flex-start", gap: spacing.sm },
+  pageTitle: { ...typography.headlineLg, color: colors.onSurface, fontSize: 30, flex: 1 },
+  deleteButton: {
+    width: 40,
+    height: 40,
+    borderRadius: radius.full,
+    backgroundColor: colors.surfaceContainerLow,
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 4,
+  },
   pageSubtitle: { ...typography.bodyLg, color: colors.onSurfaceVariant },
   statsRow: { flexDirection: "row", gap: spacing.sm, marginTop: spacing.md },
   statBox: {

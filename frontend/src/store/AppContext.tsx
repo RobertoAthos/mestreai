@@ -34,6 +34,7 @@ interface AppState {
   openProject: (id: string) => Promise<Project | null>;
   setCurrentProject: (id: string | null) => void;
   streamProject: (id: string) => void;
+  deleteProject: (id: string) => Promise<void>;
 }
 
 function tryRepairSummary(buffer: string): ProjectSummary | null {
@@ -123,6 +124,28 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       }
     },
     [openProject],
+  );
+
+  const deleteProject = useCallback(
+    async (id: string) => {
+      await api.deleteProject(id);
+      // Tear down any open analysis stream for this project before clearing
+      // it from state so onEvent callbacks don't resurrect the row.
+      if (streamRef.current?.id === id) {
+        streamRef.current.handle.close();
+        streamRef.current = null;
+        setIsStreaming(false);
+        setPartialSummary(null);
+      }
+      setProjects((prev) => prev.filter((p) => p.id !== id));
+      setCurrentProjectIdState((prev) => (prev === id ? null : prev));
+      setCurrentProjectState((prev) => (prev?.id === id ? null : prev));
+      AsyncStorage.getItem(CURRENT_PROJECT_KEY).then((stored) => {
+        if (stored === id) AsyncStorage.removeItem(CURRENT_PROJECT_KEY).catch(() => {});
+      });
+      refreshQuota();
+    },
+    [refreshQuota],
   );
 
   const streamProject = useCallback(
@@ -235,6 +258,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       openProject,
       setCurrentProject,
       streamProject,
+      deleteProject,
     }),
     [
       projects,
@@ -250,6 +274,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       openProject,
       setCurrentProject,
       streamProject,
+      deleteProject,
     ],
   );
 

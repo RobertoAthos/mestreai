@@ -15,6 +15,7 @@ import type { ProjectListItem } from "@/types/api";
 type Props = {
   project: ProjectListItem;
   onPress: () => void;
+  onLongPress?: () => void;
   /** Index in the list, used for staggered entrance. */
   index?: number;
 };
@@ -39,7 +40,7 @@ function pickIcon(name: string, status: string) {
   return <FileIcon size={20} color={colors.secondary} />;
 }
 
-export function ProjectCard({ project, onPress, index = 0 }: Props) {
+export function ProjectCard({ project, onPress, onLongPress, index = 0 }: Props) {
   const accent = statusAccentColor(project.status);
   const subtitle = `${formatDate(project.created_at)} • ${project.pages} ${project.pages === 1 ? "página" : "páginas"}`;
 
@@ -56,11 +57,14 @@ export function ProjectCard({ project, onPress, index = 0 }: Props) {
     >
       <Pressable
         onPress={onPress}
+        onLongPress={onLongPress}
+        delayLongPress={350}
         onPressIn={() => { scale.value = withSpring(0.98, spring.press); }}
         onPressOut={() => { scale.value = withSpring(1, spring.press); }}
         style={styles.card}
         accessibilityRole="button"
         accessibilityLabel={`Abrir projeto ${project.name}`}
+        accessibilityHint={onLongPress ? "Toque longo para excluir" : undefined}
       >
         <View style={[styles.accent, { backgroundColor: accent }]} />
         <View style={styles.iconWrap}>{pickIcon(project.name, project.status)}</View>

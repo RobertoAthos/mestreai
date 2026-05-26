@@ -2,6 +2,7 @@ import { useFocusEffect, useRouter } from "expo-router";
 import { useCallback, useMemo } from "react";
 import {
   ActivityIndicator,
+  Alert,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -44,6 +45,7 @@ export default function DashboardScreen() {
     refreshProjects,
     refreshQuota,
     setCurrentProject,
+    deleteProject,
   } = useApp();
 
   useFocusEffect(
@@ -65,6 +67,27 @@ export default function DashboardScreen() {
   const onOpenProject = (id: string) => {
     setCurrentProject(id);
     router.push("/(tabs)/summary");
+  };
+
+  const onRequestDelete = (id: string, name: string) => {
+    Alert.alert(
+      "Excluir projeto",
+      `Tem certeza que deseja excluir "${name}"? Esta ação não pode ser desfeita.`,
+      [
+        { text: "Cancelar", style: "cancel" },
+        {
+          text: "Excluir",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              await deleteProject(id);
+            } catch {
+              Alert.alert("Erro", "Não foi possível excluir o projeto. Tente novamente.");
+            }
+          },
+        },
+      ],
+    );
   };
 
   return (
@@ -123,6 +146,7 @@ export default function DashboardScreen() {
                 index={i}
                 project={project}
                 onPress={() => onOpenProject(project.id)}
+                onLongPress={() => onRequestDelete(project.id, project.name)}
               />
             ))}
           </View>
