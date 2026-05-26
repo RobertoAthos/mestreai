@@ -20,7 +20,7 @@ import { EmptyState } from "@/components/EmptyState";
 import { ChatIcon, SendIcon } from "@/components/Icon";
 import { PrimaryButton } from "@/components/PrimaryButton";
 import { QuickReplyChip } from "@/components/QuickReplyChip";
-import { api, ApiError } from "@/services/api";
+import { api, ApiError, streamChatMessage, type SseHandle } from "@/services/api";
 import { useApp } from "@/store/AppContext";
 import { colors, radius, spacing, typography } from "@/theme";
 import type { ChatMessage } from "@/types/api";
@@ -66,6 +66,16 @@ export default function ChatScreen() {
   const [error, setError] = useState<string | undefined>(undefined);
 
   const scrollRef = useRef<ScrollView>(null);
+  const streamRef = useRef<SseHandle | null>(null);
+
+  // Tear down any in-flight stream when leaving the screen so we don't keep
+  // an SSE socket open in the background.
+  useEffect(() => {
+    return () => {
+      streamRef.current?.close();
+      streamRef.current = null;
+    };
+  }, []);
 
   const lastQuickReplies = useMemo(() => {
     const lastAssistant = [...messages].reverse().find((m) => m.role === "assistant");
@@ -95,37 +105,84 @@ export default function ChatScreen() {
     }, [currentProjectId, loadHistory, openProject]),
   );
 
+  // Also depend on the last message's content length so we keep scrolling
+  // as the assistant types — otherwise the streaming bubble grows below
+  // the fold without bringing it into view.
+  const lastContentLen = messages.length ? messages[messages.length - 1].content.length : 0;
   useEffect(() => {
     if (!scrollRef.current) return;
     const t = setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 60);
     return () => clearTimeout(t);
-  }, [messages.length, sending]);
+  }, [messages.length, lastContentLen, sending]);
 
   const send = useCallback(
-    async (raw: string) => {
+    (raw: string) => {
       const text = raw.trim();
       if (!text || !currentProjectId || sending) return;
       setInput("");
-      const optimistic: ChatMessage = {
-        id: `tmp-${Date.now()}`,
+      const optimisticUserId = `tmp-user-${Date.now()}`;
+      const optimisticAssistantId = `tmp-asst-${Date.now()}`;
+      const optimisticUser: ChatMessage = {
+        id: optimisticUserId,
         role: "user",
         content: text,
         created_at: new Date().toISOString(),
         quick_replies: [],
       };
-      setMessages((prev) => [...prev, optimistic]);
+      const optimisticAssistant: ChatMessage = {
+        id: optimisticAssistantId,
+        role: "assistant",
+        content: "",
+        created_at: new Date().toISOString(),
+        quick_replies: [],
+      };
+      setMessages((prev) => [...prev, optimisticUser, optimisticAssistant]);
       setSending(true);
       setError(undefined);
       Haptics.selectionAsync().catch(() => {});
-      try {
-        const res = await api.sendMessage(currentProjectId, text);
-        setMessages(res.history);
-      } catch (err) {
-        setError(err instanceof ApiError ? err.message : "Falha ao enviar a pergunta.");
-        setMessages((prev) => prev.filter((m) => m.id !== optimistic.id));
-      } finally {
-        setSending(false);
-      }
+
+      // ID assigned by the server for the assistant message. We swap the
+      // optimistic id for the real one once the stream tells us, so the
+      // final `done` event can update the same bubble in place.
+      let assistantId = optimisticAssistantId;
+
+      streamRef.current?.close();
+      streamRef.current = streamChatMessage(currentProjectId, text, (event) => {
+        if (event.type === "user_message") {
+          setMessages((prev) =>
+            prev.map((m) => (m.id === optimisticUserId ? event.message : m)),
+          );
+        } else if (event.type === "assistant_start") {
+          const newId = event.id;
+          setMessages((prev) =>
+            prev.map((m) => (m.id === assistantId ? { ...m, id: newId } : m)),
+          );
+          assistantId = newId;
+        } else if (event.type === "token") {
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === assistantId ? { ...m, content: m.content + event.delta } : m,
+            ),
+          );
+        } else if (event.type === "done") {
+          setMessages((prev) => prev.map((m) => (m.id === assistantId ? event.message : m)));
+          setSending(false);
+        } else if (event.type === "error") {
+          setError(event.message);
+          setMessages((prev) => prev.filter((m) => m.id !== optimisticUserId && m.id !== assistantId));
+          setSending(false);
+        }
+      });
+
+      streamRef.current.done
+        .catch((err) => {
+          setError(err instanceof ApiError ? err.message : "Falha ao enviar a pergunta.");
+          setMessages((prev) => prev.filter((m) => m.id !== optimisticUserId && m.id !== assistantId));
+        })
+        .finally(() => {
+          setSending(false);
+          streamRef.current = null;
+        });
     },
     [currentProjectId, sending],
   );
@@ -186,23 +243,29 @@ export default function ChatScreen() {
 
           {messages.length > 0 && <TimestampPill label={dayLabel(messages[0].created_at)} />}
 
-          {messages.map((message) => (
-            <ChatBubble
-              key={message.id}
-              role={message.role}
-              content={message.content}
-              timestamp={formatTime(message.created_at)}
-            />
-          ))}
-
-          {sending && (
-            <View style={styles.typingRow}>
-              <View style={styles.typingBubble}>
-                <ActivityIndicator color={colors.secondary} />
-                <Text style={styles.typingText}>Mestre IA está digitando…</Text>
-              </View>
-            </View>
-          )}
+          {messages.map((message) => {
+            // While the assistant message is still being streamed (empty
+            // content), swap in the typing indicator instead of an empty
+            // bubble so the chat doesn't show a blank gap.
+            if (message.role === "assistant" && message.content.length === 0 && sending) {
+              return (
+                <View key={message.id} style={styles.typingRow}>
+                  <View style={styles.typingBubble}>
+                    <ActivityIndicator color={colors.secondary} />
+                    <Text style={styles.typingText}>Mestre IA está digitando…</Text>
+                  </View>
+                </View>
+              );
+            }
+            return (
+              <ChatBubble
+                key={message.id}
+                role={message.role}
+                content={message.content}
+                timestamp={formatTime(message.created_at)}
+              />
+            );
+          })}
 
           {error && <Text style={styles.errorText}>{error}</Text>}
         </ScrollView>

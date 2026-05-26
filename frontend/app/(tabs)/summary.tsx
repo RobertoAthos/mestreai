@@ -1,5 +1,5 @@
 import { useFocusEffect, useRouter } from "expo-router";
-import { useCallback, useMemo } from "react";
+import { useCallback, useEffect, useMemo } from "react";
 import {
   ActivityIndicator,
   RefreshControl,
@@ -37,7 +37,15 @@ function formatM(value: number | null | undefined, fallback = "—"): string {
 
 export default function SummaryScreen() {
   const router = useRouter();
-  const { currentProject, currentProjectId, openProject, refreshProjects, pollProject } = useApp();
+  const {
+    currentProject,
+    currentProjectId,
+    openProject,
+    refreshProjects,
+    streamProject,
+    partialSummary,
+    isStreaming,
+  } = useApp();
 
   useFocusEffect(
     useCallback(() => {
@@ -45,12 +53,26 @@ export default function SummaryScreen() {
     }, [currentProjectId, openProject]),
   );
 
+  // Auto-attach to the analysis stream whenever we land on a project that's
+  // still being processed. Idempotent — streamProject is a no-op if we're
+  // already attached to this id.
+  useEffect(() => {
+    if (currentProject?.status === "processing" && currentProject?.id) {
+      streamProject(currentProject.id);
+    }
+  }, [currentProject?.status, currentProject?.id, streamProject]);
+
   const onRefresh = useCallback(async () => {
     if (currentProjectId) await openProject(currentProjectId);
     await refreshProjects();
   }, [currentProjectId, openProject, refreshProjects]);
 
-  const summary = currentProject?.summary;
+  // Show the partial JSON while the analysis is still streaming; once it's
+  // done, swap to the canonical summary persisted on the project row.
+  const summary =
+    currentProject?.status === "processing" && partialSummary
+      ? partialSummary
+      : currentProject?.summary;
 
   const goToChat = () => router.push("/(tabs)/chat");
 
@@ -73,22 +95,27 @@ export default function SummaryScreen() {
     );
   }
 
-  if (currentProject.status === "processing") {
+  // While processing, only show the full-screen spinner until the first
+  // partial JSON is parseable — from then on we drop into the normal
+  // summary scroll view (rendered below) and let sections fill in live.
+  if (currentProject.status === "processing" && !summary) {
     return (
       <SafeAreaView style={styles.safe} edges={["top"]}>
         <AppHeader />
         <View style={styles.placeholder}>
           <View style={styles.processingWrap}>
             <ActivityIndicator color={colors.secondary} size="large" />
-            <Text style={styles.processingTitle}>Analisando seu projeto</Text>
+            <Text style={styles.processingTitle}>
+              {isStreaming ? "Lendo a planta…" : "Analisando seu projeto"}
+            </Text>
             <Text style={styles.processingBody}>
-              A IA está lendo o PDF e extraindo medidas, esquadrias e o passo a passo. Isso costuma levar de 30 a 60 segundos.
+              A IA está extraindo medidas, esquadrias e o passo a passo. Os blocos vão aparecendo aqui conforme ela escreve.
             </Text>
             <PrimaryButton
-              label="Atualizar agora"
+              label="Reconectar"
               variant="ghost"
               onPress={() => {
-                pollProject(currentProject.id);
+                streamProject(currentProject.id);
                 onRefresh();
               }}
             />
@@ -127,6 +154,14 @@ export default function SummaryScreen() {
           <Text style={styles.pageSubtitle}>
             Visão geral do projeto e pontos críticos para a execução da obra.
           </Text>
+          {currentProject.status === "processing" && (
+            <View style={styles.streamingPill}>
+              <ActivityIndicator color={colors.secondary} size="small" />
+              <Text style={styles.streamingText}>
+                Atualizando ao vivo conforme a IA lê a planta…
+              </Text>
+            </View>
+          )}
           <View style={styles.statsRow}>
             <Stat value={String(summary?.rooms.length ?? 0)} label="Ambientes" />
             <Stat value={String(summary?.doors.length ?? 0)} label="Portas" />
@@ -283,6 +318,18 @@ const styles = StyleSheet.create({
   processingWrap: { alignItems: "center", gap: spacing.md, paddingHorizontal: spacing.lg },
   processingTitle: { ...typography.titleLg, color: colors.onSurface },
   processingBody: { ...typography.bodyMd, color: colors.onSurfaceVariant, textAlign: "center", maxWidth: 320 },
+  streamingPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+    backgroundColor: colors.surfaceContainerLow,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: radius.full,
+    alignSelf: "flex-start",
+    marginTop: spacing.xs,
+  },
+  streamingText: { ...typography.labelMd, color: colors.secondary },
   warningBox: {
     backgroundColor: "rgba(255, 255, 255, 0.7)",
     borderRadius: radius.md,

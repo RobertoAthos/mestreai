@@ -51,6 +51,7 @@ export interface Project {
   size_bytes: number;
   summary: ProjectSummary | null;
   error: string | null;
+  chat_memory: string | null;
 }
 
 export interface ProjectListItem {

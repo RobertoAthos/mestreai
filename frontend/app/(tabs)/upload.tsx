@@ -50,7 +50,7 @@ function formatSize(bytes?: number): string {
 export default function UploadScreen() {
   const router = useRouter();
   const { user } = useAuth();
-  const { refreshProjects, setCurrentProject, pollProject, quota, refreshQuota } = useApp();
+  const { refreshProjects, setCurrentProject, streamProject, quota, refreshQuota } = useApp();
 
   const [file, setFile] = useState<PickedFile | null>(null);
   const [stage, setStage] = useState<Stage>("idle");
@@ -114,7 +114,7 @@ export default function UploadScreen() {
       setStage("done");
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
       setCurrentProject(project.id);
-      pollProject(project.id);
+      streamProject(project.id);
       await refreshProjects();
       await refreshQuota();
       setTimeout(() => {
