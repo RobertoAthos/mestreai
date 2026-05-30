@@ -24,8 +24,13 @@ SYSTEM_PROMPT_SUMMARY = """Você é o Mestre IA, um assistente especialista em i
 para mestres de obras e pedreiros brasileiros. Sua tarefa é ler o PDF de uma planta baixa e
 devolver um JSON estruturado com as medidas dos cômodos, esquadrias e um checklist prático
 de execução. Seja preciso, objetivo e use unidades em metros. Não invente medidas: se uma
-informação não estiver clara na planta, deixe o campo vazio ou null. Responda exclusivamente
-em JSON válido conforme o esquema solicitado, sem texto adicional."""
+informação não estiver clara na planta, deixe o campo vazio ou null.
+O projeto pode ter VÁRIAS folhas (planta baixa, cortes, fachadas…), enviadas como imagens em
+ordem. Para cada cômodo, porta e janela que você conseguir localizar visualmente, inclua a caixa
+delimitadora normalizada no campo "geometry" (coordenadas de 0 a 1, origem no canto superior
+esquerdo) E o campo "geometry.sheet" com o índice (base 0) da imagem/folha onde o elemento
+aparece. Se não tiver certeza da posição, deixe "geometry" como null — nunca invente coordenadas.
+Responda exclusivamente em JSON válido conforme o esquema solicitado, sem texto adicional."""
 
 SYSTEM_PROMPT_CHAT = """Você é o Mestre IA, um assistente prático para mestres de obras no canteiro.
 Use o resumo estruturado do projeto fornecido como contexto e responda em português brasileiro,
@@ -73,40 +78,53 @@ Sem listas, sem markdown, sem citar números de mensagem. Máximo 6 frases."""
 
 SUMMARY_JSON_SCHEMA_HINT = """Esquema esperado:
 {
-  "rooms": [{"name": str, "width_m": float|null, "length_m": float|null, "area_m2": float|null, "notes": str|null}],
-  "doors": [{"code": str, "width_m": float, "height_m": float, "room": str|null, "notes": str|null}],
-  "windows": [{"code": str, "width_m": float, "height_m": float, "sill_height_m": float|null, "room": str|null, "notes": str|null}],
+  "rooms": [{"name": str, "width_m": float|null, "length_m": float|null, "area_m2": float|null, "notes": str|null, "geometry": {"x": float, "y": float, "w": float, "h": float, "sheet": int}|null}],
+  "doors": [{"code": str, "width_m": float, "height_m": float, "room": str|null, "notes": str|null, "geometry": {"x": float, "y": float, "w": float, "h": float, "sheet": int}|null}],
+  "windows": [{"code": str, "width_m": float, "height_m": float, "sill_height_m": float|null, "room": str|null, "notes": str|null, "geometry": {"x": float, "y": float, "w": float, "h": float, "sheet": int}|null}],
   "walls": [{"type": str, "thickness_cm": float, "notes": str|null}],
   "execution_checklist": [str, str, ...],
   "general_notes": str|null
-}"""
+}
+
+Sobre "geometry": é a caixa delimitadora (bounding box) do elemento NA IMAGEM da folha onde ele
+aparece. Use coordenadas NORMALIZADAS de 0 a 1 em relação à página inteira, com a origem no canto
+SUPERIOR ESQUERDO: x = borda esquerda, y = borda superior, w = largura, h = altura (todos entre 0
+e 1, e x+w <= 1, y+h <= 1). "sheet" é o índice (começando em 0) da IMAGEM em que você localizou o
+elemento, NA ORDEM em que as imagens foram enviadas (1ª imagem = 0, 2ª = 1, …). Use a folha onde o
+elemento realmente aparece (ex.: ambientes na planta baixa). Se não conseguir localizar com
+confiança, use "geometry": null."""
 
 
+# Geometry below is illustrative (a coherent synthetic floor plan in normalized
+# 0..1 coordinates) so the interactive preview is demoable under MOCK_AI=true.
+# It will NOT line up with an arbitrary uploaded PDF — only real AI extraction
+# produces boxes that match the actual planta.
 MOCK_SUMMARY = ProjectSummary(
     rooms=[
-        {"name": "Sala de Estar", "width_m": 4.20, "length_m": 5.50, "area_m2": 23.10, "notes": "Integrada com a cozinha"},
-        {"name": "Cozinha", "width_m": 3.10, "length_m": 4.20, "area_m2": 13.02, "notes": "Bancada em L"},
-        {"name": "Quarto 1 (Suíte)", "width_m": 3.50, "length_m": 4.00, "area_m2": 14.00, "notes": "Suíte com banheiro"},
-        {"name": "Quarto 2", "width_m": 3.00, "length_m": 3.50, "area_m2": 10.50, "notes": None},
-        {"name": "Banheiro Social", "width_m": 1.50, "length_m": 2.40, "area_m2": 3.60, "notes": None},
-        {"name": "Banheiro Suíte", "width_m": 1.50, "length_m": 2.20, "area_m2": 3.30, "notes": "Box 0.90x1.20"},
-        {"name": "Área de Serviço", "width_m": 1.80, "length_m": 2.20, "area_m2": 3.96, "notes": None},
+        {"name": "Sala de Estar", "width_m": 4.20, "length_m": 5.50, "area_m2": 23.10, "notes": "Integrada com a cozinha", "geometry": {"x": 0.10, "y": 0.15, "w": 0.35, "h": 0.32}},
+        {"name": "Cozinha", "width_m": 3.10, "length_m": 4.20, "area_m2": 13.02, "notes": "Bancada em L", "geometry": {"x": 0.10, "y": 0.49, "w": 0.35, "h": 0.17}},
+        {"name": "Quarto 1 (Suíte)", "width_m": 3.50, "length_m": 4.00, "area_m2": 14.00, "notes": "Suíte com banheiro", "geometry": {"x": 0.47, "y": 0.15, "w": 0.43, "h": 0.27}},
+        {"name": "Quarto 2", "width_m": 3.00, "length_m": 3.50, "area_m2": 10.50, "notes": None, "geometry": {"x": 0.47, "y": 0.44, "w": 0.30, "h": 0.22}},
+        {"name": "Banheiro Social", "width_m": 1.50, "length_m": 2.40, "area_m2": 3.60, "notes": None, "geometry": {"x": 0.78, "y": 0.56, "w": 0.12, "h": 0.10}},
+        {"name": "Banheiro Suíte", "width_m": 1.50, "length_m": 2.20, "area_m2": 3.30, "notes": "Box 0.90x1.20", "geometry": {"x": 0.78, "y": 0.44, "w": 0.12, "h": 0.10}},
+        {"name": "Área de Serviço", "width_m": 1.80, "length_m": 2.20, "area_m2": 3.96, "notes": None, "geometry": {"x": 0.10, "y": 0.68, "w": 0.20, "h": 0.13, "sheet": 0}},
+        {"name": "Garagem", "width_m": 2.80, "length_m": 5.00, "area_m2": 14.00, "notes": "Exemplo na 2ª folha (cortes)", "geometry": {"x": 0.30, "y": 0.30, "w": 0.40, "h": 0.45, "sheet": 1}},
     ],
     doors=[
-        {"code": "P1", "width_m": 0.90, "height_m": 2.10, "room": "Entrada principal", "notes": "Folha de madeira maciça"},
-        {"code": "P2", "width_m": 0.80, "height_m": 2.10, "room": "Quarto 1", "notes": None},
-        {"code": "P3", "width_m": 0.80, "height_m": 2.10, "room": "Quarto 2", "notes": None},
-        {"code": "P4", "width_m": 0.70, "height_m": 2.10, "room": "Banheiro Social", "notes": None},
-        {"code": "P5", "width_m": 0.70, "height_m": 2.10, "room": "Banheiro Suíte", "notes": None},
-        {"code": "P6", "width_m": 0.80, "height_m": 2.10, "room": "Cozinha", "notes": "Porta de correr"},
+        {"code": "P1", "width_m": 0.90, "height_m": 2.10, "room": "Entrada principal", "notes": "Folha de madeira maciça", "geometry": {"x": 0.085, "y": 0.30, "w": 0.02, "h": 0.06}},
+        {"code": "P2", "width_m": 0.80, "height_m": 2.10, "room": "Quarto 1", "notes": None, "geometry": {"x": 0.46, "y": 0.24, "w": 0.02, "h": 0.06}},
+        {"code": "P3", "width_m": 0.80, "height_m": 2.10, "room": "Quarto 2", "notes": None, "geometry": {"x": 0.46, "y": 0.50, "w": 0.02, "h": 0.06}},
+        {"code": "P4", "width_m": 0.70, "height_m": 2.10, "room": "Banheiro Social", "notes": None, "geometry": {"x": 0.77, "y": 0.58, "w": 0.02, "h": 0.05}},
+        {"code": "P5", "width_m": 0.70, "height_m": 2.10, "room": "Banheiro Suíte", "notes": None, "geometry": {"x": 0.77, "y": 0.46, "w": 0.02, "h": 0.05}},
+        {"code": "P6", "width_m": 0.80, "height_m": 2.10, "room": "Cozinha", "notes": "Porta de correr", "geometry": {"x": 0.30, "y": 0.485, "w": 0.05, "h": 0.02}},
     ],
     windows=[
-        {"code": "J1", "width_m": 1.50, "height_m": 1.20, "sill_height_m": 1.00, "room": "Sala", "notes": "2 folhas de correr"},
-        {"code": "J2", "width_m": 1.20, "height_m": 1.20, "sill_height_m": 1.00, "room": "Quarto 1", "notes": None},
-        {"code": "J3", "width_m": 1.20, "height_m": 1.20, "sill_height_m": 1.00, "room": "Quarto 2", "notes": None},
-        {"code": "J4", "width_m": 0.60, "height_m": 0.60, "sill_height_m": 1.80, "room": "Banheiro Social", "notes": "Basculante"},
-        {"code": "J5", "width_m": 0.60, "height_m": 0.60, "sill_height_m": 1.80, "room": "Banheiro Suíte", "notes": "Basculante"},
-        {"code": "J6", "width_m": 1.00, "height_m": 1.00, "sill_height_m": 1.20, "room": "Cozinha", "notes": None},
+        {"code": "J1", "width_m": 1.50, "height_m": 1.20, "sill_height_m": 1.00, "room": "Sala", "notes": "2 folhas de correr", "geometry": {"x": 0.18, "y": 0.14, "w": 0.10, "h": 0.018}},
+        {"code": "J2", "width_m": 1.20, "height_m": 1.20, "sill_height_m": 1.00, "room": "Quarto 1", "notes": None, "geometry": {"x": 0.60, "y": 0.14, "w": 0.10, "h": 0.018}},
+        {"code": "J3", "width_m": 1.20, "height_m": 1.20, "sill_height_m": 1.00, "room": "Quarto 2", "notes": None, "geometry": {"x": 0.55, "y": 0.655, "w": 0.08, "h": 0.018}},
+        {"code": "J4", "width_m": 0.60, "height_m": 0.60, "sill_height_m": 1.80, "room": "Banheiro Social", "notes": "Basculante", "geometry": {"x": 0.79, "y": 0.655, "w": 0.06, "h": 0.015}},
+        {"code": "J5", "width_m": 0.60, "height_m": 0.60, "sill_height_m": 1.80, "room": "Banheiro Suíte", "notes": "Basculante", "geometry": {"x": 0.885, "y": 0.46, "w": 0.015, "h": 0.05}},
+        {"code": "J6", "width_m": 1.00, "height_m": 1.00, "sill_height_m": 1.20, "room": "Cozinha", "notes": None, "geometry": {"x": 0.085, "y": 0.54, "w": 0.015, "h": 0.06}},
     ],
     walls=[
         {"type": "Alvenaria externa", "thickness_cm": 19.0, "notes": "Bloco cerâmico 14x19x39 + reboco 2.5cm cada lado"},
@@ -154,6 +172,33 @@ def _parse_json(text: str) -> dict:
     return parsed
 
 
+def _summary_for_chat(summary: ProjectSummary) -> str:
+    """Serialize the summary for the chat / quick-reply context WITHOUT geometry.
+    Bounding boxes are layout data for the SVG overlay only — they add nothing to
+    a text answer and would waste tokens on every turn (twice, in streaming)."""
+    data = summary.model_dump(mode="json")
+    for key in ("rooms", "doors", "windows", "walls"):
+        for item in data.get(key) or []:
+            if isinstance(item, dict):
+                item.pop("geometry", None)
+    return json.dumps(data, ensure_ascii=False, indent=2)
+
+
+def _clamp_sheets(summary: ProjectSummary, n_sheets: int) -> ProjectSummary:
+    """Clamp every element's geometry.sheet into [0, n_sheets-1] so an AI
+    overshoot (e.g. sheet 5 with 3 folhas) lands on the last folha instead of
+    vanishing from every overlay."""
+    if n_sheets <= 0:
+        return summary
+    last = n_sheets - 1
+    for collection in (summary.rooms, summary.doors, summary.windows, summary.walls):
+        for el in collection:
+            g = getattr(el, "geometry", None)
+            if g is not None and g.sheet is not None and g.sheet > last:
+                g.sheet = last
+    return summary
+
+
 class OpenRouterClient:
     def __init__(self) -> None:
         settings = get_settings()
@@ -171,44 +216,64 @@ class OpenRouterClient:
     def is_mocked(self) -> bool:
         return self.settings.mock_ai or self.settings.openrouter_api_key.startswith("mock-")
 
-    def _build_summary_messages(self, pdf_path: Path) -> list[dict]:
-        text = extract_text(pdf_path)
-        image_b64 = render_page_as_base64_png(pdf_path, page_index=0)
+    def _build_summary_messages(self, specs: list[dict]) -> list[dict]:
+        """specs: ordered list of {path, page_index, sheet}. One image per folha,
+        sent in sheet order so the model's geometry.sheet maps to the position."""
+        # Text from every DISTINCT source file (sheets may share a multi-page PDF).
+        seen: set[str] = set()
+        texts: list[str] = []
+        for spec in specs:
+            path = spec["path"]
+            if path in seen:
+                continue
+            seen.add(path)
+            piece = extract_text(Path(path))
+            if piece.strip():
+                texts.append(piece)
+        text = "\n\n".join(texts)
 
         user_content: list[dict] = [
             {
                 "type": "text",
                 "text": (
-                    "Analise o PDF da planta arquitetônica a seguir e devolva o JSON "
-                    "estruturado conforme o esquema abaixo.\n\n"
+                    "Analise as folhas do projeto arquitetônico a seguir e devolva o JSON "
+                    "estruturado conforme o esquema abaixo. Cada imagem é precedida por um "
+                    'rótulo "Folha N:" — use exatamente esse N (base 0) no campo geometry.sheet.\n\n'
                     f"{SUMMARY_JSON_SCHEMA_HINT}\n\n"
-                    "Texto extraído do PDF:\n"
+                    "Texto extraído das folhas:\n"
                     f"{text or '(sem texto vetorial)'}"
                 ),
             }
         ]
-        if image_b64:
-            user_content.append(
-                {
-                    "type": "image_url",
-                    "image_url": {"url": f"data:image/png;base64,{image_b64}"},
-                }
+        for spec in specs:
+            image_b64 = render_page_as_base64_png(
+                Path(spec["path"]), page_index=spec.get("page_index", 0)
             )
+            if image_b64:
+                # Label each image with its canonical sheet index so a skipped
+                # render (None) never shifts the positional mapping.
+                user_content.append({"type": "text", "text": f"Folha {spec.get('sheet', 0)}:"})
+                user_content.append(
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/png;base64,{image_b64}"},
+                    }
+                )
 
         return [
             {"role": "system", "content": SYSTEM_PROMPT_SUMMARY},
             {"role": "user", "content": user_content},
         ]
 
-    async def summarize_project(self, pdf_path: Path) -> ProjectSummary:
+    async def summarize_project(self, specs: list[dict]) -> ProjectSummary:
         if self.is_mocked:
-            return MOCK_SUMMARY.model_copy(deep=True)
+            return _clamp_sheets(MOCK_SUMMARY.model_copy(deep=True), len(specs))
 
-        messages = self._build_summary_messages(pdf_path)
+        messages = self._build_summary_messages(specs)
         raw = await self._complete_json(messages, temperature=0.1)
         try:
             payload = _parse_json(raw)
-            return ProjectSummary.model_validate(payload)
+            return _clamp_sheets(ProjectSummary.model_validate(payload), len(specs))
         except (LLMParseError, ValidationError) as exc:
             logger.warning("First summary parse/validation failed (%s); retrying once.", exc)
 
@@ -228,7 +293,7 @@ class OpenRouterClient:
         raw_retry = await self._complete_json(repair_messages, temperature=0.0)
         try:
             payload = _parse_json(raw_retry)
-            return ProjectSummary.model_validate(payload)
+            return _clamp_sheets(ProjectSummary.model_validate(payload), len(specs))
         except (LLMParseError, ValidationError) as exc:
             logger.exception("Summary parse failed after retry. Raw responses logged below.")
             logger.error("First raw response: %s", raw)
@@ -245,7 +310,7 @@ class OpenRouterClient:
         )
         return completion.choices[0].message.content or "{}"
 
-    async def stream_summary(self, pdf_path: Path) -> AsyncIterator[dict]:
+    async def stream_summary(self, specs: list[dict]) -> AsyncIterator[dict]:
         """Stream the analysis. Yields dicts:
 
         - {"type": "token", "delta": str, "buffer": str} for each LLM chunk.
@@ -257,10 +322,12 @@ class OpenRouterClient:
         """
         if self.is_mocked:
             async for ev in _mock_stream_summary():
+                if ev.get("type") == "done":
+                    ev = {"type": "done", "summary": _clamp_sheets(ev["summary"], len(specs))}
                 yield ev
             return
 
-        messages = self._build_summary_messages(pdf_path)
+        messages = self._build_summary_messages(specs)
         buffer = ""
         try:
             stream = await self.client.chat.completions.create(
@@ -286,7 +353,7 @@ class OpenRouterClient:
 
         try:
             payload = _parse_json(buffer)
-            summary = ProjectSummary.model_validate(payload)
+            summary = _clamp_sheets(ProjectSummary.model_validate(payload), len(specs))
         except (LLMParseError, ValidationError) as exc:
             logger.warning("Stream summary parse failed (%s); attempting one repair call.", exc)
             repair_messages = messages + [
@@ -303,7 +370,7 @@ class OpenRouterClient:
             try:
                 raw_retry = await self._complete_json(repair_messages, temperature=0.0)
                 payload = _parse_json(raw_retry)
-                summary = ProjectSummary.model_validate(payload)
+                summary = _clamp_sheets(ProjectSummary.model_validate(payload), len(specs))
             except (LLMParseError, ValidationError) as retry_exc:
                 logger.exception("Repair call also failed.")
                 yield {"type": "error", "message": "Não foi possível interpretar a resposta da IA."}
@@ -371,7 +438,7 @@ class OpenRouterClient:
         Kept tiny so the user doesn't perceive latency after the answer streams.
         Returns an empty list on any failure — frontend has its own fallbacks.
         """
-        context = summary.model_dump_json(indent=2) if summary else "(sem projeto)"
+        context = _summary_for_chat(summary) if summary else "(sem projeto)"
         try:
             completion = await self.client.chat.completions.create(
                 model=self.settings.openrouter_model,
@@ -447,7 +514,7 @@ class OpenRouterClient:
         context_blocks: list[str] = []
         if summary:
             context_blocks.append(
-                "RESUMO ESTRUTURADO DO PROJETO:\n" + summary.model_dump_json(indent=2)
+                "RESUMO ESTRUTURADO DO PROJETO:\n" + _summary_for_chat(summary)
             )
         else:
             context_blocks.append("RESUMO ESTRUTURADO DO PROJETO: (nenhum projeto carregado)")

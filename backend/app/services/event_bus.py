@@ -72,6 +72,15 @@ class EventBus:
         return cls._streams.get(project_id)
 
     @classmethod
+    def reset(cls, project_id: str) -> ProjectStream:
+        """Replace any existing (possibly already-closed) stream with a fresh
+        one. Used when re-analysis restarts so a reconnecting client doesn't see
+        the prior run's `done` state (within the retention window) and bail."""
+        stream = ProjectStream()
+        cls._streams[project_id] = stream
+        return stream
+
+    @classmethod
     def _sweep(cls) -> None:
         """Drop streams that finished more than RETENTION_SECONDS ago."""
         now = time.monotonic()

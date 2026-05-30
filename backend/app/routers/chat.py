@@ -194,11 +194,20 @@ async def _stream_chat_events(
             async for event in client.stream_chat(
                 payload.message, project.summary, history, chat_memory,
             ):
-                if await request.is_disconnected():
-                    return
+                # NOTE: do NOT poll request.is_disconnected() here. This is a POST
+                # SSE: Starlette's is_disconnected() reads the buffered
+                # `http.disconnect` that follows a consumed request body and
+                # returns True on the first call, killing the stream before any
+                # token is sent (the GET analysis stream is immune). A real
+                # client disconnect is handled by the failing yield below.
                 if event["type"] == "token":
-                    answer_buffer += event["delta"]
-                    yield _sse({"type": "token", "delta": event["delta"]})
+                    delta = event["delta"]
+                    answer_buffer += delta
+                    # Re-chunk into small pieces so the client renders a smooth
+                    # typewriter effect — providers often deliver large deltas.
+                    for i in range(0, len(delta), 4):
+                        yield _sse({"type": "token", "delta": delta[i : i + 4]})
+                        await asyncio.sleep(0.01)
                 elif event["type"] == "done":
                     answer_buffer = event["answer"]
                     quick_replies = event["quick_replies"]

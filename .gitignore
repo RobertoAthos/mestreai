@@ -1,0 +1,13 @@
+# OS junk
+.DS_Store
+
+# Build output
+.next/
+
+# Backend runtime data (uploaded PDFs + generated per-project storage)
+backend/storage/
+
+# Python
+__pycache__/
+*.pyc
+.env

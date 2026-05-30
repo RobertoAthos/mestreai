@@ -1,0 +1,339 @@
+@import "tailwindcss";
+
+/*
+ * Mestre IA — design tokens ported 1:1 from the React Native app
+ * (frontend/src/theme/index.ts). Single source of truth for the web.
+ */
+@theme {
+  /* Surface family — clean white canvas with a faint cool tint so the
+   * indigo + cyan accents read as crisp contrast. Cards are pure white. */
+  --color-surface: #f7f8fd;
+  --color-surface-dim: #e4e8f4;
+  --color-surface-bright: #ffffff;
+  --color-surface-container-lowest: #ffffff;
+  --color-surface-container-low: #f1f3fb;
+  --color-surface-container: #eaeef8;
+  --color-surface-container-high: #e2e7f4;
+  --color-surface-container-highest: #d9e0f0;
+
+  /* Foreground — dark slate-navy ink on the light canvas. */
+  --color-on-surface: #141a2e;
+  --color-on-surface-variant: #4f5871;
+  --color-inverse-surface: #1c2336;
+  --color-inverse-on-surface: #f2f5ff;
+
+  /* Outline. */
+  --color-outline: #8990a6;
+  --color-outline-variant: #cdd3e4;
+
+  /* Primary — electric indigo for hero containers and active states.
+   * White text clears WCAG AA on it (~5.9:1). */
+  --color-primary: #4f46e5;
+  --color-on-primary: #ffffff;
+  --color-primary-container: #e5e3fb;
+  --color-on-primary-container: #211c6b;
+  --color-primary-subtle: #cdd2ff;
+
+  /* Secondary — indigo (matches primary) for accents, links and icons; the
+   * container stays bright cyan for vivid fills (CTAs, chips). */
+  --color-secondary: #4f47e5;
+  --color-on-secondary: #ffffff;
+  --color-secondary-container: #5fdcf0;
+  --color-on-secondary-container: #053b47;
+
+  /* Tertiary — emerald used for success / completed. */
+  --color-tertiary: #16a34a;
+  --color-on-tertiary: #ffffff;
+  --color-tertiary-container: #d6f5e1;
+  --color-on-tertiary-container: #06502a;
+
+  /* Error — rose. */
+  --color-error: #dc2626;
+  --color-on-error: #ffffff;
+  --color-error-container: #ffe2e0;
+  --color-on-error-container: #8c1411;
+
+  /* Typography. */
+  --font-sans: var(--font-roboto), ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-mono: var(--font-roboto-mono), ui-monospace, "SFMono-Regular", monospace;
+  /* Display headlines use Roboto's heaviest weights. */
+  --font-display: var(--font-roboto), ui-sans-serif, sans-serif;
+
+  /* Radius scale. */
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-2xl: 24px;
+
+  /* Elevation. */
+  /* Elevation — soft navy shadows for the light canvas; the FAB and send
+   * button carry a subtle colored glow that matches the accent they use. */
+  --shadow-card: 0 1px 2px rgba(15, 23, 42, 0.06);
+  --shadow-modal: 0 12px 28px rgba(15, 23, 42, 0.14);
+  --shadow-nav: 0 -4px 12px rgba(15, 23, 42, 0.06);
+  --shadow-top: 0 8px 20px rgba(15, 23, 42, 0.10);
+  --shadow-fab: 0 12px 24px rgba(79, 71, 229, 0.30);
+  --shadow-send: 0 6px 16px rgba(79, 70, 229, 0.28);
+
+  /* Entrance / press animations. */
+  --animate-fade-up: fade-up 0.32s cubic-bezier(0.22, 1, 0.36, 1) both;
+  --animate-fade-down: fade-down 0.32s cubic-bezier(0.22, 1, 0.36, 1) both;
+  --animate-fade-in: fade-in 0.22s ease-out both;
+
+  @keyframes fade-up {
+    from { opacity: 0; transform: translateY(16px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  @keyframes fade-down {
+    from { opacity: 0; transform: translateY(-16px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  @keyframes fade-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+}
+
+@layer base {
+  html {
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    scroll-behavior: smooth;
+  }
+  body {
+    background-color: var(--color-surface);
+    color: var(--color-on-surface);
+    font-family: var(--font-sans);
+  }
+  *,
+  ::before,
+  ::after {
+    border-color: var(--color-outline-variant);
+  }
+  ::selection {
+    background-color: var(--color-secondary-container);
+    color: var(--color-on-secondary-container);
+  }
+  /* Consistent, visible keyboard-focus ring for every interactive element
+   * (buttons, links, role="button" surfaces). Text inputs opt out via
+   * outline-none and show a focus-within ring on their wrapper instead. */
+  :focus-visible {
+    outline: 2px solid var(--color-secondary);
+    outline-offset: 2px;
+    border-radius: 3px;
+  }
+  /* Custom scrollbar for the blueprint aesthetic. */
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-thumb {
+    background-color: var(--color-surface-container-highest);
+    border-radius: 9999px;
+    border: 2px solid var(--color-surface);
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background-color: var(--color-outline-variant);
+  }
+}
+
+/*
+ * Typography scale — mirrors theme.typography. Use as className helpers so
+ * components stay readable and the scale stays consistent.
+ */
+.type-display-lg {
+  font-weight: 700;
+  font-size: 40px;
+  line-height: 48px;
+  letter-spacing: -0.8px;
+}
+.type-headline-lg {
+  font-weight: 600;
+  font-size: 28px;
+  line-height: 36px;
+  letter-spacing: -0.2px;
+}
+.type-headline-md {
+  font-weight: 600;
+  font-size: 24px;
+  line-height: 32px;
+}
+.type-title-lg {
+  font-weight: 600;
+  font-size: 20px;
+  line-height: 28px;
+}
+.type-title-md {
+  font-weight: 600;
+  font-size: 16px;
+  line-height: 24px;
+}
+.type-body-lg {
+  font-weight: 400;
+  font-size: 16px;
+  line-height: 24px;
+}
+.type-body-md {
+  font-weight: 400;
+  font-size: 14px;
+  line-height: 20px;
+}
+.type-body-sm {
+  font-weight: 400;
+  font-size: 13px;
+  line-height: 18px;
+}
+.type-label-md {
+  font-weight: 500;
+  font-size: 12px;
+  line-height: 16px;
+  letter-spacing: 0.6px;
+}
+.type-code-md {
+  font-family: var(--font-mono);
+  font-weight: 400;
+  font-size: 13px;
+  line-height: 18px;
+}
+
+/* Press feedback — pairs with active:scale on interactive surfaces. */
+.press {
+  transition: transform 0.12s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.12s ease;
+}
+.press:active {
+  transform: scale(0.97);
+}
+
+/* Navbar link — black title with an underline on hover; the active page
+ * stays underlined (in the primary indigo). */
+.nav-link {
+  color: var(--color-on-surface);
+  font-size: 14px;
+  font-weight: 500;
+  text-decoration: none;
+  border-radius: var(--radius-md);
+  transition: color 0.15s ease;
+}
+.nav-link:hover {
+  text-decoration: underline;
+  text-underline-offset: 4px;
+  text-decoration-thickness: 2px;
+}
+.nav-link.is-active,
+.nav-link[aria-current="page"] {
+  text-decoration: underline;
+  text-underline-offset: 4px;
+  text-decoration-thickness: 2px;
+  text-decoration-color: var(--color-primary);
+}
+
+/* Blueprint grid backdrop used by hero / marketing surfaces. */
+.blueprint-grid {
+  background-image:
+    linear-gradient(rgba(124, 131, 155, 0.08) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(124, 131, 155, 0.08) 1px, transparent 1px);
+  background-size: 28px 28px;
+}
+
+/* Animated dots used in the "typing" indicator. */
+@keyframes typing-bounce {
+  0%, 80%, 100% { transform: translateY(0); opacity: 0.4; }
+  40% { transform: translateY(-4px); opacity: 1; }
+}
+.typing-dot {
+  animation: typing-bounce 1.2s infinite ease-in-out;
+}
+
+/* ---------------------------------------------------------------------------
+ * Landing page — "Midnight Blueprint" atmosphere & motion
+ * ------------------------------------------------------------------------- */
+
+/* Cyan → indigo gradient text for hero accent words. */
+.text-gradient {
+  background-image: linear-gradient(100deg, var(--color-primary) 0%, #8b5cf6 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* Luminous, slowly drifting technical grid. */
+@keyframes grid-pan {
+  from { background-position: 0 0, 0 0; }
+  to { background-position: 28px 28px, 28px 28px; }
+}
+.landing-grid {
+  background-image:
+    linear-gradient(rgba(79, 70, 229, 0.09) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(95, 220, 240, 0.10) 1px, transparent 1px);
+  background-size: 28px 28px;
+  animation: grid-pan 22s linear infinite;
+}
+
+/* Soft floating for hovering data chips. */
+@keyframes float-y {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-9px); }
+}
+.animate-float { animation: float-y 6s ease-in-out infinite; }
+
+/* Pulsing glow for ambient orbs / nodes. */
+@keyframes glow-pulse {
+  0%, 100% { opacity: 0.45; }
+  50% { opacity: 0.95; }
+}
+.animate-glow { animation: glow-pulse 5s ease-in-out infinite; }
+
+/* Scanner sweep over the floor-plan mock. */
+@keyframes scan-sweep {
+  0% { transform: translateY(-130%); opacity: 0; }
+  12% { opacity: 1; }
+  88% { opacity: 1; }
+  100% { transform: translateY(130%); opacity: 0; }
+}
+.animate-scan { animation: scan-sweep 3.8s cubic-bezier(0.4, 0, 0.2, 1) infinite; }
+
+/* Blueprint stroke draw-in. */
+@keyframes draw-dash { to { stroke-dashoffset: 0; } }
+
+/* Longer, more cinematic staggered reveal for landing sections (on load). */
+@keyframes reveal-up {
+  from { opacity: 0; transform: translateY(26px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.reveal { animation: reveal-up 0.75s cubic-bezier(0.22, 1, 0.36, 1) both; }
+
+/* Scroll-triggered reveal — elements ease in as they enter the viewport.
+ * The .is-visible class is toggled by the <Reveal> component (IntersectionObserver). */
+.scroll-reveal {
+  opacity: 0;
+  transform: translateY(30px);
+  transition:
+    opacity 0.7s cubic-bezier(0.22, 1, 0.36, 1),
+    transform 0.7s cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: opacity, transform;
+}
+.scroll-reveal.is-visible {
+  opacity: 1;
+  transform: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .scroll-reveal {
+    opacity: 1 !important;
+    transform: none !important;
+  }
+}
+
+/* Respect users who prefer reduced motion — neutralize entrance, typing and
+ * spinner animations as well as press/transition motion. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    animation-duration: 0.01ms !important;
+    animation-delay: 0ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
