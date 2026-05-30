@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { ChatBubble, TimestampPill } from "@/components/ChatBubble";
 import { EmptyState } from "@/components/EmptyState";
-import { ChatIcon, SendIcon } from "@/components/Icon";
+import { ChatIcon, ChevronRightIcon, SendIcon } from "@/components/Icon";
 import { PrimaryButton } from "@/components/PrimaryButton";
 import { QuickReplyChip } from "@/components/QuickReplyChip";
 import { Spinner } from "@/components/Spinner";
@@ -221,6 +221,14 @@ export default function ChatPage() {
   return (
     <div className="flex h-[calc(100dvh-200px)] flex-col sm:h-[calc(100dvh-136px)]">
       <div className="border-b border-surface-container-highest/60 pb-3">
+        <button
+          type="button"
+          onClick={() => router.push("/summary")}
+          className="press -ml-1 mb-1.5 inline-flex items-center gap-1 rounded-md px-1 py-0.5 type-label-md text-secondary transition-colors hover:text-on-surface"
+        >
+          <ChevronRightIcon size={15} color="var(--color-secondary)" className="rotate-180" />
+          Voltar ao resumo
+        </button>
         <h1 className="type-title-lg text-on-surface">{currentProject.name}</h1>
         <p className="type-body-md text-secondary">Chat do projeto</p>
       </div>

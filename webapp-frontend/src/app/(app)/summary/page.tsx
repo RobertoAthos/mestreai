@@ -14,7 +14,6 @@ import {
 
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { EmptyState } from "@/components/EmptyState";
-import { Fab } from "@/components/Fab";
 import {
   ArrowRightIcon,
   ChatIcon,
@@ -640,41 +639,12 @@ export default function SummaryPage() {
             </MainSection>
           ) : null}
 
-          {/* Closing CTA — the desktop affordance; mobile uses the floating FAB. */}
-          <section className="blueprint-grid relative hidden overflow-hidden rounded-xl border border-primary/30 bg-primary-container/40 p-6 sm:block sm:p-8">
-            <div className="relative flex flex-col items-start gap-4 sm:flex-row sm:items-center sm:justify-between">
-              <div className="flex flex-col gap-1">
-                <h3 className="type-title-lg text-on-surface">Ficou com dúvidas na planta?</h3>
-                <p className="type-body-md text-on-surface-variant">
-                  Pergunte qualquer coisa sobre as medidas, esquadrias ou o passo a passo da obra.
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => router.push("/chat")}
-                className="press group inline-flex shrink-0 items-center gap-2 rounded-xl bg-primary px-5 py-3 type-title-md text-on-primary shadow-fab transition-shadow hover:brightness-105"
-              >
-                <ChatIcon size={18} color="var(--color-on-primary)" />
-                Tirar dúvida no chat
-                <ArrowRightIcon
-                  size={16}
-                  color="var(--color-on-primary)"
-                  className="transition-transform group-hover:translate-x-0.5"
-                />
-              </button>
-            </div>
-          </section>
         </div>
       </div>
 
-      {/* Mobile-only floating action; desktop uses the inline closing CTA. */}
-      <div className="sm:hidden">
-        <Fab
-          label="Tirar dúvida no chat"
-          onClick={() => router.push("/chat")}
-          icon={<ChatIcon size={18} color="var(--color-on-secondary)" />}
-        />
-      </div>
+      {/* Project-scoped chat launcher — the only entry to the chat now that it's
+          off the global navbar; persistent on both breakpoints. */}
+      <ChatBalloon onClick={() => router.push("/chat")} processing={processing} />
 
       <ConfirmDialog
         open={confirmOpen}
@@ -701,6 +671,85 @@ export default function SummaryPage() {
         }}
         onCancel={() => setPendingRemoveSheet(null)}
       />
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------ chat balloon -- */
+
+/** The project-scoped chat launcher. With Resumo/Chat gone from the global nav,
+ *  this persistent "balão do Mestre IA" is the ONLY entry to the chat — so it
+ *  stays visible on BOTH breakpoints (it replaces the old desktop CTA + the
+ *  mobile-only Fab). A blueprint tile (corner-bracket ticks, not a round blob)
+ *  that reveals its label on hover/focus, plus a one-time reveal on mount so
+ *  touch users (no hover) learn what it is — suppressed while streaming so it
+ *  never competes with the "Ao vivo" indicator. */
+function ChatBalloon({ onClick, processing }: { onClick: () => void; processing: boolean }) {
+  const [revealed, setRevealed] = useState(false);
+  useEffect(() => {
+    if (processing) return; // don't fight the live-streaming indicator
+    const open = window.setTimeout(() => setRevealed(true), 900);
+    const close = window.setTimeout(() => setRevealed(false), 4200);
+    return () => {
+      window.clearTimeout(open);
+      window.clearTimeout(close);
+    };
+  }, [processing]);
+
+  return (
+    <div className="fixed bottom-24 right-6 z-40 sm:bottom-6">
+      {/* Finite cyan attention ring — secondary-container reads on the indigo
+          bubble; the global reduced-motion block clamps it to a single play. */}
+      <span
+        aria-hidden
+        className="animate-ping-ring pointer-events-none absolute inset-0 -z-10 rounded-xl bg-secondary-container/40"
+      />
+      <button
+        type="button"
+        onClick={onClick}
+        aria-label="Pergunte ao Mestre IA sobre esta planta"
+        className={[
+          "press group animate-fade-up relative flex h-14 items-center overflow-hidden rounded-xl bg-primary px-[15px] text-on-primary shadow-fab outline-none transition-[gap,padding,filter] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] hover:brightness-105 focus-visible:ring-2 focus-visible:ring-secondary-container focus-visible:ring-offset-2 focus-visible:ring-offset-surface",
+          revealed ? "gap-2 pr-5" : "gap-0",
+          "hover:gap-2 hover:pr-5 focus-visible:gap-2 focus-visible:pr-5",
+        ].join(" ")}
+      >
+        {/* Corner-bracket ticks — drawing-sheet motif. */}
+        <span
+          aria-hidden
+          className="pointer-events-none absolute left-1.5 top-1.5 h-2.5 w-2.5 rounded-[1px] border-l-2 border-t-2 border-on-primary/40"
+        />
+        <span
+          aria-hidden
+          className="pointer-events-none absolute bottom-1.5 right-1.5 h-2.5 w-2.5 rounded-[1px] border-b-2 border-r-2 border-on-primary/40"
+        />
+        <span className="relative flex h-7 w-7 shrink-0 items-center justify-center">
+          <ChatIcon size={22} color="var(--color-on-primary)" />
+          {/* Static cyan "online" dot, ringed so it reads on indigo. */}
+          <span
+            aria-hidden
+            className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full bg-secondary-container ring-2 ring-primary"
+          />
+        </span>
+        <span
+          className={[
+            "type-label-md whitespace-nowrap leading-none transition-[max-width,opacity] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]",
+            revealed ? "max-w-[180px] opacity-100" : "max-w-0 opacity-0",
+            "group-hover:max-w-[180px] group-hover:opacity-100 group-focus-visible:max-w-[180px] group-focus-visible:opacity-100",
+          ].join(" ")}
+        >
+          Pergunte ao Mestre IA
+        </span>
+        <ArrowRightIcon
+          size={15}
+          color="var(--color-on-primary)"
+          className={[
+            "shrink-0 transition-[max-width,opacity,transform] duration-300",
+            revealed ? "max-w-[20px] opacity-90" : "max-w-0 opacity-0",
+            "group-hover:max-w-[20px] group-hover:translate-x-0.5 group-hover:opacity-90 group-focus-visible:max-w-[20px] group-focus-visible:opacity-90",
+          ].join(" ")}
+        />
+      </button>
     </div>
   );
 }
